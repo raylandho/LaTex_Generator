@@ -92,12 +92,20 @@ class WhiteboardView(QGraphicsView):
 
     # Track Space key for panning -------------------------------------------
     def keyPressEvent(self, e):
+        # If an item (e.g., LabelItem) is editing, let it handle keys
+        if self.scene().focusItem() is not None:
+            super().keyPressEvent(e); return
+
         if e.key() == Qt.Key_Space:
             self._space_down = True
             e.accept(); return
         super().keyPressEvent(e)
 
     def keyReleaseEvent(self, e):
+        # If an item is editing, let it handle keys
+        if self.scene().focusItem() is not None:
+            super().keyReleaseEvent(e); return
+
         if e.key() == Qt.Key_Space:
             self._space_down = False
             e.accept(); return
