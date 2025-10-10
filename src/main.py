@@ -76,10 +76,10 @@ class MainWindow(QMainWindow):
             del it
 
     def _add_text(self):
-        from items import LabelItem  # absolute import to match your setup
+        from items import LabelItem
         item = LabelItem("F")
-        item.setPos(0, 0)
         self.scene.addItem(item)
+        item.setTransformOriginPoint(item.boundingRect().center())
 
     def _export_png(self):
         path, _ = QFileDialog.getSaveFileName(self, "Export PNG", "diagram.png", "PNG (*.png)")
@@ -108,7 +108,6 @@ class MainWindow(QMainWindow):
                 f.setPointSizeF(new_size)
                 it.setFont(f)
 
-
 def main():
     app = QApplication(sys.argv)
     root = os.path.dirname(os.path.abspath(__file__))  # src/
@@ -116,7 +115,6 @@ def main():
     win = MainWindow(project_root=project_root)
     win.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()

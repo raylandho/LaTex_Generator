@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 from constants import GRID_SIZE, SCENE_BOUNDS, ASSET_MAP
 from items import PixmapItem, LabelItem, load_pixmap_for
 from palette import MIME_TYPE
+from handles import TransformOverlay, apply_transform  # NEW
 
 
 class WhiteboardScene(QGraphicsScene):
@@ -15,29 +16,19 @@ class WhiteboardScene(QGraphicsScene):
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         super().drawBackground(painter, rect)
-
-        # grid (1px cosmetic lines aligned to pixel centers to avoid blur/ghosts)
-        grid_pen = QPen(QColor(235, 235, 235))
-        grid_pen.setCosmetic(True)
+        grid_pen = QPen(QColor(235, 235, 235)); grid_pen.setCosmetic(True)
         painter.setPen(grid_pen)
 
         left = int(rect.left()) - (int(rect.left()) % GRID_SIZE)
         top = int(rect.top()) - (int(rect.top()) % GRID_SIZE)
-
-        # draw verticals at x + 0.5, horizontals at y + 0.5 for crisp lines
         x = left
         while x < rect.right():
-            painter.drawLine(x + 0.5, rect.top(), x + 0.5, rect.bottom())
-            x += GRID_SIZE
+            painter.drawLine(x + 0.5, rect.top(), x + 0.5, rect.bottom()); x += GRID_SIZE
         y = top
         while y < rect.bottom():
-            painter.drawLine(rect.left(), y + 0.5, rect.right(), y + 0.5)
-            y += GRID_SIZE
+            painter.drawLine(rect.left(), y + 0.5, rect.right(), y + 0.5); y += GRID_SIZE
 
-        # axes (also cosmetic, 2px)
-        axis_pen = QPen(QColor(210, 210, 210))
-        axis_pen.setCosmetic(True)
-        axis_pen.setWidth(2)
+        axis_pen = QPen(QColor(210, 210, 210)); axis_pen.setCosmetic(True); axis_pen.setWidth(2)
         painter.setPen(axis_pen)
         painter.drawLine(rect.left(), 0 + 0.5, rect.right(), 0 + 0.5)
         painter.drawLine(0 + 0.5, rect.top(), 0 + 0.5, rect.bottom())
@@ -48,34 +39,64 @@ class WhiteboardView(QGraphicsView):
         super().__init__(scene)
         self.assets_dir = assets_dir
 
-        # Better rendering + fewer artifacts when scaling pixmaps
         self.setRenderHints(QPainter.Antialiasing |
                             QPainter.TextAntialiasing |
                             QPainter.SmoothPixmapTransform)
-
-        # Force full repaints to avoid stale pixels when scaling/moving
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-
-        # Disable view caching; let Qt repaint everything cleanly
         self.setCacheMode(QGraphicsView.CacheNone)
 
         self.setDragMode(QGraphicsView.RubberBandDrag)
         self.setAcceptDrops(True)
         self._panning = False
         self._last = None
-        self._space_down = False  # track Space key
+        self._space_down = False
 
-    # Zoom / Resize selection ------------------------------------------------
+        # --- overlay lifecycle tied to selection ---
+        self._overlay: TransformOverlay | None = None
+        self.scene().selectionChanged.connect(self._on_selection_changed)
+
+    # Keep overlay in sync with selection
+    def _on_selection_changed(self):
+        sel = [it for it in self.scene().selectedItems()]
+        # Only show for a single item
+        if len(sel) == 1:
+            self._ensure_overlay(sel[0])
+        else:
+            self._drop_overlay()
+
+    def _ensure_overlay(self, target):
+        if self._overlay and self._overlay.target is target:
+            self._overlay.update_from_target()
+            return
+        self._drop_overlay()
+        self._overlay = TransformOverlay(target)
+        self.scene().addItem(self._overlay)
+        self._overlay.attach()            # <-- attach AFTER both share the same scene
+        self._overlay.update_from_target()
+
+    def _drop_overlay(self):
+        if self._overlay:
+            self.scene().removeItem(self._overlay)
+            self._overlay = None
+
+    # Zoom / Resize / Rotate selection --------------------------------------
     def wheelEvent(self, e):
-        # Shift+Wheel => scale selected items; Ctrl+Wheel => zoom view
+        if (e.modifiers() & Qt.AltModifier) and self.scene().selectedItems():
+            steps = e.angleDelta().y() / 120.0
+            if hasattr(self.window(), "_rotate_selected"):
+                self.window()._rotate_selected(steps * 10.0)
+            if self._overlay:
+                self._overlay.update_from_target()
+            self.viewport().update(); e.accept(); return
+
         if (e.modifiers() & Qt.ShiftModifier) and self.scene().selectedItems():
             delta = e.angleDelta().y() / 240.0
             factor = 1.0 + 0.2 * delta
             if hasattr(self.window(), "_scale_selected"):
                 self.window()._scale_selected(factor)
-            # ensure the whole view repaints (prevents "border line" trails)
-            self.viewport().update()
-            e.accept(); return
+            if self._overlay:
+                self._overlay.update_from_target()
+            self.viewport().update(); e.accept(); return
 
         if e.modifiers() & Qt.ControlModifier:
             delta = e.angleDelta().y() / 240.0
@@ -85,30 +106,23 @@ class WhiteboardView(QGraphicsView):
             new = self.mapToScene(e.position().toPoint())
             d = new - old
             self.translate(d.x(), d.y())
-            self.viewport().update()
-            e.accept()
-        else:
-            super().wheelEvent(e)
+            self.viewport().update(); e.accept(); return
+
+        super().wheelEvent(e)
 
     # Track Space key for panning -------------------------------------------
     def keyPressEvent(self, e):
-        # If an item (e.g., LabelItem) is editing, let it handle keys
         if self.scene().focusItem() is not None:
             super().keyPressEvent(e); return
-
         if e.key() == Qt.Key_Space:
-            self._space_down = True
-            e.accept(); return
+            self._space_down = True; e.accept(); return
         super().keyPressEvent(e)
 
     def keyReleaseEvent(self, e):
-        # If an item is editing, let it handle keys
         if self.scene().focusItem() is not None:
             super().keyReleaseEvent(e); return
-
         if e.key() == Qt.Key_Space:
-            self._space_down = False
-            e.accept(); return
+            self._space_down = False; e.accept(); return
         super().keyReleaseEvent(e)
 
     # Mouse pan when Space held or middle button ----------------------------
@@ -158,10 +172,14 @@ class WhiteboardView(QGraphicsView):
                 filename = ASSET_MAP.get(label)
                 pix = load_pixmap_for(filename, self.assets_dir)
                 item = PixmapItem(pix)
-                # center-anchor the pixmap for nicer snapping
                 br = item.boundingRect()
                 item.setOffset(-br.width() / 2, -br.height() / 2)
+            # Always set transform origin to center for intuitive transforms
+            item.setTransformOriginPoint(item.boundingRect().center())
             item.setPos(self.mapToScene(e.position().toPoint()))
             self.scene().addItem(item)
+            # show overlay for the newly added item
+            item.setSelected(True)
+            self._ensure_overlay(item)
             e.acceptProposedAction(); return
         super().dropEvent(e)
