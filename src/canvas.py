@@ -80,7 +80,7 @@ class WhiteboardView(QGraphicsView):
         self.setAcceptDrops(True)
         self.viewport().setAcceptDrops(True)
 
-        # Optional overlay (selection box/handles)
+        # Selection overlay
         self._overlay = None
         try:
             self.scene().selectionChanged.connect(self._on_selection_changed)
@@ -89,9 +89,7 @@ class WhiteboardView(QGraphicsView):
 
     # ----- selection overlay hooks -----
     def _on_selection_changed(self):
-        if self._overlay is None:
-            return
-        sel = [it for it in self.scene().selectedItems()]
+        sel = list(self.scene().selectedItems())
         if len(sel) == 1:
             self._ensure_overlay(sel[0])
         else:
@@ -103,13 +101,15 @@ class WhiteboardView(QGraphicsView):
         except Exception:
             return
         if self._overlay and getattr(self._overlay, "target", None) is target:
-            self._overlay.update_from_target(); return
+            self._overlay.update_from_target()
+            return
         self._drop_overlay()
         self._overlay = TransformOverlay(target)
         self.scene().addItem(self._overlay)
         if hasattr(self._overlay, "attach"):
             self._overlay.attach()
         self._overlay.update_from_target()
+        self._overlay.update()  # nudge a repaint now
 
     def _drop_overlay(self):
         if self._overlay:
@@ -126,33 +126,29 @@ class WhiteboardView(QGraphicsView):
     def event(self, e):
         t = e.type()
         if t in (QEvent.NativeGesture, QEvent.Gesture, QEvent.GestureOverride):
-            # swallow any gestures so they don't become scroll/zoom
             e.accept()
             return True
         return super().event(e)
 
+    # Let Shift+letter through while editing; otherwise block nav keys
     def keyPressEvent(self, e):
-        # If a text item is actively being edited, don't block typing at all
+        # If a text item is actively being edited, let keys pass through
         fi = self.scene().focusItem()
         if fi and hasattr(fi, "textInteractionFlags") and \
-        fi.textInteractionFlags() == Qt.TextEditorInteraction:
+           fi.textInteractionFlags() == Qt.TextEditorInteraction:
             super().keyPressEvent(e)
             return
 
-        # Otherwise, block view-scrolling/navigation keys as before
         blocked_keys = {
             Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
             Qt.Key_Home, Qt.Key_End, Qt.Key_PageUp, Qt.Key_PageDown,
             Qt.Key_Space  # prevent space from scrolling the view
         }
-
-        # Only block when it's one of the above, or when Ctrl/Alt combos (not Shift)
+        # Only block navigation keys or Ctrl/Alt combos (allow Shift)
         if e.key() in blocked_keys or (e.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
             e.accept()
             return
-
         super().keyPressEvent(e)
-
 
     # Ensure mouse middle/right/space panning stays off (we do nothing special)
     def mousePressEvent(self, e):  super().mousePressEvent(e)
