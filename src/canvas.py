@@ -1,25 +1,22 @@
 from __future__ import annotations
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QEvent
 from PySide6.QtGui import QPainter, QPen, QColor
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
-from constants import GRID_SIZE, ASSET_MAP  # SCENE_BOUNDS unused for infinite board
+from constants import GRID_SIZE, SCENE_BOUNDS, ASSET_MAP
 from items import PixmapItem, LabelItem, load_pixmap_for
 from palette import MIME_TYPE
-
-# Infinite-ish bounds; we only paint the visible part of the grid
-HUGE_BOUNDS = QRectF(-1_000_000.0, -1_000_000.0, 2_000_000.0, 2_000_000.0)
 
 
 class WhiteboardScene(QGraphicsScene):
     def __init__(self):
-        super().__init__(HUGE_BOUNDS)
+        super().__init__(SCENE_BOUNDS)
         self.setBackgroundBrush(Qt.white)
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
         super().drawBackground(painter, rect)
 
-        # Crisp grid in exposed rect only
+        # --- crisp grid in exposed rect only ---
         grid_pen = QPen(QColor(235, 235, 235))
         grid_pen.setCosmetic(True)
         painter.setPen(grid_pen)
@@ -42,8 +39,8 @@ class WhiteboardScene(QGraphicsScene):
         axis_pen.setCosmetic(True)
         axis_pen.setWidth(2)
         painter.setPen(axis_pen)
-        painter.drawLine(rect.left(), 0.5, rect.right(), 0.5)   # X axis
-        painter.drawLine(0.5, rect.top(), 0.5, rect.bottom())   # Y axis
+        painter.drawLine(rect.left(), 0.5, rect.right(), 0.5)   # X
+        painter.drawLine(0.5, rect.top(), 0.5, rect.bottom())   # Y
 
 
 class WhiteboardView(QGraphicsView):
@@ -51,38 +48,46 @@ class WhiteboardView(QGraphicsView):
         super().__init__(scene)
         self.assets_dir = assets_dir
 
-        # Quality & feel
+        # Optional GPU viewport
+        try:
+            from PySide6.QtOpenGLWidgets import QOpenGLWidget
+            self.setViewport(QOpenGLWidget())
+        except Exception:
+            pass
+
+        # Quality & smoothness
         self.setRenderHints(QPainter.Antialiasing |
                             QPainter.TextAntialiasing |
                             QPainter.SmoothPixmapTransform)
-        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-        self.setCacheMode(QGraphicsView.CacheNone)
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
 
-        # Natural zoom/pan
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        # Reduce flicker
+        self.viewport().setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.viewport().setAttribute(Qt.WA_NoSystemBackground, True)
 
+        # Absolutely no transform or anchor-based zooming
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.setResizeAnchor(QGraphicsView.NoAnchor)
+
+        # No scrollbars, ever
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Keep selection rubber-band and item interaction
         self.setDragMode(QGraphicsView.RubberBandDrag)
+
+        # Accept drops
         self.setAcceptDrops(True)
-        self._panning = False
-        self._last = None
-        self._space_down = False
+        self.viewport().setAcceptDrops(True)
 
-        # IMPORTANT: let the view receive key events (for Space-to-pan, Ctrl+0, etc.)
-        self.setFocusPolicy(Qt.StrongFocus)
-
-        # Scrollbars if you drift far
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        # If you’re using the handle overlay:
+        # Optional overlay (selection box/handles)
         self._overlay = None
         try:
             self.scene().selectionChanged.connect(self._on_selection_changed)
         except Exception:
             pass
 
-    # ----- selection overlay hooks (safe no-ops if handles.py not present) -----
+    # ----- selection overlay hooks -----
     def _on_selection_changed(self):
         if self._overlay is None:
             return
@@ -111,89 +116,55 @@ class WhiteboardView(QGraphicsView):
             self.scene().removeItem(self._overlay)
             self._overlay = None
 
-    # ----------------- Zoom / Resize / Rotate selection --------------------
+    # ----------------- HARD BLOCKS: wheel/gestures/keys/scroll -----------------
+
+    # Block mouse wheel & trackpad two-finger scroll
     def wheelEvent(self, e):
-        # Alt + Wheel => rotate selection
-        if (e.modifiers() & Qt.AltModifier) and self.scene().selectedItems():
-            if hasattr(self.window(), "_rotate_selected"):
-                steps = e.angleDelta().y() / 120.0
-                self.window()._rotate_selected(steps * 10.0)
-            if self._overlay: self._overlay.update_from_target()
-            self.viewport().update(); e.accept(); return
+        e.accept()  # swallow; no zoom, no scroll
 
-        # Shift + Wheel => uniform rescale selection
-        if (e.modifiers() & Qt.ShiftModifier) and self.scene().selectedItems():
-            if hasattr(self.window(), "_scale_selected"):
-                delta = e.angleDelta().y() / 240.0
-                self.window()._scale_selected(1.0 + 0.2 * delta)
-            if self._overlay: self._overlay.update_from_target()
-            self.viewport().update(); e.accept(); return
+    # Block native gestures from touchpads (pinch/rotate) on Qt 6
+    def event(self, e):
+        t = e.type()
+        if t in (QEvent.NativeGesture, QEvent.Gesture, QEvent.GestureOverride):
+            # swallow any gestures so they don't become scroll/zoom
+            e.accept()
+            return True
+        return super().event(e)
 
-        # DEFAULT: Wheel zooms view (no modifier needed)
-        delta = e.angleDelta().y() / 240.0
-        factor = 1.0 + 0.2 * delta
-        self.scale(factor, factor)
-        self.viewport().update(); e.accept(); return
-
-    # ------------------------ Space-to-pan & resets ------------------------
+    # Block keyboard navigation that would scroll the view
     def keyPressEvent(self, e):
-        if self.scene().focusItem() is not None:
-            super().keyPressEvent(e); return
-        if e.key() == Qt.Key_Space:
-            self._space_down = True; e.accept(); return
-        # Ctrl+0 => reset view to origin @ 100%
-        if (e.modifiers() & Qt.ControlModifier) and e.key() == Qt.Key_0:
-            self.resetTransform()
-            self.centerOn(0, 0)
-            e.accept(); return
+        blocked_keys = {
+            Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
+            Qt.Key_Home, Qt.Key_End, Qt.Key_PageUp, Qt.Key_PageDown,
+            Qt.Key_Space  # space would sometimes trigger scrolling focus widgets
+        }
+        if e.key() in blocked_keys or (e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier)):
+            e.accept()
+            return
         super().keyPressEvent(e)
 
-    def keyReleaseEvent(self, e):
-        if self.scene().focusItem() is not None:
-            super().keyReleaseEvent(e); return
-        if e.key() == Qt.Key_Space:
-            self._space_down = False; e.accept(); return
-        super().keyReleaseEvent(e)
+    # Ensure mouse middle/right/space panning stays off (we do nothing special)
+    def mousePressEvent(self, e):  super().mousePressEvent(e)
+    def mouseMoveEvent(self, e):   super().mouseMoveEvent(e)
+    def mouseReleaseEvent(self, e): super().mouseReleaseEvent(e)
 
-    # ------------------ Pan: Right/Middle drag, or Space+Left --------------
-    def mousePressEvent(self, e):
-        if (e.button() == Qt.MiddleButton or
-            e.button() == Qt.RightButton or
-            (e.button() == Qt.LeftButton and self._space_down)):
-            self._panning = True
-            self._last = e.position()
-            self.setCursor(Qt.ClosedHandCursor)
-            e.accept(); return
-        super().mousePressEvent(e)
-
-    def mouseMoveEvent(self, e):
-        if self._panning and self._last is not None:
-            d = e.position() - self._last
-            self._last = e.position()
-            self.translate(-d.x(), -d.y())
-            e.accept(); return
-        super().mouseMoveEvent(e)
-
-    def mouseReleaseEvent(self, e):
-        if self._panning and (e.button() in (Qt.MiddleButton, Qt.RightButton, Qt.LeftButton)):
-            self._panning = False
-            self._last = None
-            self.setCursor(Qt.ArrowCursor)
-            e.accept(); return
-        super().mouseReleaseEvent(e)
-
-    # ----------------------- Drag & drop -----------------------------------
+    # ----------------------- Drag & drop ---------------------------
     def dragEnterEvent(self, e):
         if e.mimeData().hasFormat(MIME_TYPE):
+            e.setDropAction(Qt.CopyAction)
             e.acceptProposedAction()
         else:
-            super().dragEnterEvent(e)
+            e.ignore()
 
     def dragMoveEvent(self, e):
         if e.mimeData().hasFormat(MIME_TYPE):
+            e.setDropAction(Qt.CopyAction)
             e.acceptProposedAction()
         else:
-            super().dragMoveEvent(e)
+            e.ignore()
+
+    def dragLeaveEvent(self, e):
+        e.accept()
 
     def dropEvent(self, e):
         if e.mimeData().hasFormat(MIME_TYPE):
@@ -206,10 +177,15 @@ class WhiteboardView(QGraphicsView):
                 item = PixmapItem(pix)
                 br = item.boundingRect()
                 item.setOffset(-br.width()/2, -br.height()/2)
+
             item.setTransformOriginPoint(item.boundingRect().center())
             item.setPos(self.mapToScene(e.position().toPoint()))
             self.scene().addItem(item)
             item.setSelected(True)
             self._ensure_overlay(item)
-            e.acceptProposedAction(); return
-        super().dropEvent(e)
+
+            e.setDropAction(Qt.CopyAction)
+            e.acceptProposedAction()
+            return
+
+        e.ignore()
