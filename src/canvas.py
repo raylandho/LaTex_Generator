@@ -131,17 +131,28 @@ class WhiteboardView(QGraphicsView):
             return True
         return super().event(e)
 
-    # Block keyboard navigation that would scroll the view
     def keyPressEvent(self, e):
+        # If a text item is actively being edited, don't block typing at all
+        fi = self.scene().focusItem()
+        if fi and hasattr(fi, "textInteractionFlags") and \
+        fi.textInteractionFlags() == Qt.TextEditorInteraction:
+            super().keyPressEvent(e)
+            return
+
+        # Otherwise, block view-scrolling/navigation keys as before
         blocked_keys = {
             Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
             Qt.Key_Home, Qt.Key_End, Qt.Key_PageUp, Qt.Key_PageDown,
-            Qt.Key_Space  # space would sometimes trigger scrolling focus widgets
+            Qt.Key_Space  # prevent space from scrolling the view
         }
-        if e.key() in blocked_keys or (e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier | Qt.AltModifier)):
+
+        # Only block when it's one of the above, or when Ctrl/Alt combos (not Shift)
+        if e.key() in blocked_keys or (e.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
             e.accept()
             return
+
         super().keyPressEvent(e)
+
 
     # Ensure mouse middle/right/space panning stays off (we do nothing special)
     def mousePressEvent(self, e):  super().mousePressEvent(e)
