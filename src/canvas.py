@@ -9,8 +9,9 @@ from palette import MIME_TYPE
 
 
 class WhiteboardScene(QGraphicsScene):
-    def __init__(self):
-        super().__init__(SCENE_BOUNDS)
+    def __init__(self, parent=None):
+        super().__init__(parent)           # ✅ use parent-aware ctor
+        self.setSceneRect(SCENE_BOUNDS)    # ✅ set the rect explicitly
         self.setBackgroundBrush(Qt.white)
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
