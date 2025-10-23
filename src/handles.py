@@ -20,13 +20,19 @@ def clamp(v: float, lo: float, hi: float) -> float:
 
 def apply_transform(item: QGraphicsItem):
     from PySide6.QtGui import QTransform
-    item.setTransformOriginPoint(item.boundingRect().center())
+    # Use the item’s current geometric center
+    c = item.boundingRect().center()
+
+    # Build T = T(+c) * R * S * T(-c)
     t = QTransform()
+    t.translate(c.x(), c.y())
     angle = getattr(item, "_angle", 0.0)
     sx = getattr(item, "_sx", 1.0)
     sy = getattr(item, "_sy", 1.0)
     t.rotate(angle)
     t.scale(sx, sy)
+    t.translate(-c.x(), -c.y())
+
     item.setTransform(t)
 
 class TransformOverlay(QGraphicsPathItem):
