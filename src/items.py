@@ -1,18 +1,33 @@
 from __future__ import annotations
 import os, re
-from PySide6.QtCore import Qt, QPointF, QRegularExpression
-from PySide6.QtGui import QPixmap, QTextCursor, QFont, QTextCharFormat
+from PySide6.QtCore import Qt, QPointF, QRegularExpression, QLineF
+from PySide6.QtGui import QPixmap, QTextCursor, QFont, QTextCharFormat, QPen
 from PySide6.QtWidgets import (
-    QGraphicsPixmapItem, QGraphicsItem, QGraphicsTextItem, QApplication
+    QGraphicsPixmapItem, QGraphicsItem, QGraphicsTextItem, QApplication,
+    QGraphicsLineItem
 )
 
 from constants import GRID_SIZE, GREEK_MAP
 
 
+# ---------- Utilities ----------
 def snap_to_grid(p: QPointF, grid: int = GRID_SIZE) -> QPointF:
     return QPointF(round(p.x() / grid) * grid, round(p.y() / grid) * grid)
 
 
+def load_pixmap_for(name: str, assets_dir: str) -> QPixmap:
+    path = os.path.join(assets_dir, name)
+    pix = QPixmap(path)
+    if pix.isNull():
+        # Graceful fallback: 64×64 checker if missing
+        from PySide6.QtGui import QImage, QColor
+        img = QImage(64, 64, QImage.Format_ARGB32)
+        img.fill(QColor("#f0f0f0"))
+        pix = QPixmap.fromImage(img)
+    return pix
+
+
+# ---------- Items ----------
 class PixmapItem(QGraphicsPixmapItem):
     """Movable/selectable pixmap with grid snapping."""
     def __init__(self, pix: QPixmap):
@@ -144,7 +159,7 @@ class LabelItem(QGraphicsTextItem):
         cur = self.textCursor()
         fmt = cur.charFormat()
         new = QTextCharFormat(fmt)
-        new.setFontItalic(not fmt.fontItalic())  # <-- fixed line (no '!' in Python)
+        new.setFontItalic(not fmt.fontItalic())
         self._merge_format_on_selection_or_word(cur, new)
 
     def _merge_format_on_selection_or_word(self, cur: QTextCursor, fmt: QTextCharFormat):
@@ -152,10 +167,7 @@ class LabelItem(QGraphicsTextItem):
         Apply formatting to current selection; if no selection, apply to the
         current typing point (so it affects text you type next).
         """
-        if not cur.hasSelection():
-            cur.mergeCharFormat(fmt)  # affects current typing
-        else:
-            cur.mergeCharFormat(fmt)
+        cur.mergeCharFormat(fmt)  # selection or caret format
         # Ensure editor uses this updated cursor going forward
         self.setTextCursor(cur)
 
@@ -228,13 +240,21 @@ class LabelItem(QGraphicsTextItem):
         return super().itemChange(change, value)
 
 
-def load_pixmap_for(name: str, assets_dir: str) -> QPixmap:
-    path = os.path.join(assets_dir, name)
-    pix = QPixmap(path)
-    if pix.isNull():
-        # Graceful fallback: 64×64 checker if missing
-        from PySide6.QtGui import QImage, QColor
-        img = QImage(64, 64, QImage.Format_ARGB32)
-        img.fill(QColor("#f0f0f0"))
-        pix = QPixmap.fromImage(img)
-    return pix
+class LineItem(QGraphicsLineItem):
+    """Selectable/movable straight line with cosmetic pen and grid snapping."""
+    def __init__(self, p1: QPointF, p2: QPointF, color=Qt.black, width: float = 2.0):
+        super().__init__(QLineF(p1, p2))
+        # Explicitly non-selectable & non-movable
+        self.setFlag(QGraphicsItem.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.ItemIsMovable, False)
+
+        pen = QPen(color, width)
+        pen.setCosmetic(True)  # constant on-screen width
+        self.setPen(pen)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange:
+            # Snap whole line when moving (Alt to bypass)
+            if not (QApplication.keyboardModifiers() & Qt.AltModifier):
+                return snap_to_grid(value)
+        return super().itemChange(change, value)
