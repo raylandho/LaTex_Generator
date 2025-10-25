@@ -1,7 +1,7 @@
 from __future__ import annotations
-import os
+import os, re
 from PySide6.QtCore import Qt, QPointF, QRegularExpression
-from PySide6.QtGui import QPixmap, QTextCursor, QFont
+from PySide6.QtGui import QPixmap, QTextCursor, QFont, QTextCharFormat
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsItem, QGraphicsTextItem, QApplication
 )
@@ -32,10 +32,20 @@ class PixmapItem(QGraphicsPixmapItem):
         return super().itemChange(change, value)
 
 
+# ---- Greek helper (case-flexible) ----
+def _greek_from_token(name: str):
+    """Return Greek symbol matching '/word' or '\\word' in a case-flexible way."""
+    return (GREEK_MAP.get(name)
+            or GREEK_MAP.get(name.capitalize())
+            or GREEK_MAP.get(name.lower()))
+
+
 class LabelItem(QGraphicsTextItem):
     """
-    Editable text label with slash Greek shortcuts.
-    Type '/alpha' or '\\Delta' then press Space/Tab/Enter (or click away) to expand.
+    Editable text label with:
+      - Slash Greek shortcuts: '/alpha' or '\\Delta' → α / Δ (case-flexible)
+      - Bold/Italic toggles: Ctrl+B / Ctrl+I (selection or caret)
+      - Grid snapping when not editing
     """
     def __init__(self, text: str = "m"):
         super().__init__(text)
@@ -47,10 +57,29 @@ class LabelItem(QGraphicsTextItem):
             | QGraphicsItem.ItemSendsGeometryChanges
             | QGraphicsItem.ItemIsFocusable
         )
-        # Sensible default font
+        # Default font
         self.setFont(QFont("Times New Roman", 20))
 
-    # ----- Editing lifecycle -----
+    # ---------- External shortcuts support (called by the view) ----------
+    def _ensure_edit_mode(self, place: str = "end"):
+        """Enter edit mode and place caret so formatting applies to future typing."""
+        if self.textInteractionFlags() != Qt.TextEditorInteraction:
+            self.setTextInteractionFlags(Qt.TextEditorInteraction)
+            self.setFocus(Qt.ShortcutFocusReason)
+        cur = self.textCursor()
+        if place == "end":
+            cur.movePosition(QTextCursor.End)
+        self.setTextCursor(cur)
+
+    def handle_ctrl_format_shortcut(self, key: int):
+        """Allow Ctrl+B / Ctrl+I to apply even before typing starts."""
+        self._ensure_edit_mode(place="end")
+        if key == Qt.Key_B:
+            self._toggle_bold()
+        elif key == Qt.Key_I:
+            self._toggle_italic()
+
+    # ---------- Editing lifecycle ----------
     def mouseDoubleClickEvent(self, event):
         # Enter edit mode
         self.setTextInteractionFlags(Qt.TextEditorInteraction)
@@ -65,15 +94,16 @@ class LabelItem(QGraphicsTextItem):
         super().mouseDoubleClickEvent(event)
 
     def focusOutEvent(self, event):
-        # Expand anywhere in the text when leaving edit mode
-        self._expand_slash_tokens(expand_all=True)
+        # Expand anywhere in the text when leaving edit mode (preserving formatting)
+        self._expand_all_slash_tokens_preserve_format()
         self.setTextInteractionFlags(Qt.NoTextInteraction)
         super().focusOutEvent(event)
 
+    # ---------- Key handling: Enter/Esc, Bold/Italic, Greek expansion ----------
     def keyPressEvent(self, event):
         # Commit & expand on Enter; cancel on Esc
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            self._expand_slash_tokens(expand_all=True)
+            self._expand_all_slash_tokens_preserve_format()
             self.clearFocus()  # triggers focusOutEvent
             event.accept()
             return
@@ -82,32 +112,59 @@ class LabelItem(QGraphicsTextItem):
             event.accept()
             return
 
-        # Let base class insert the key first
+        # Formatting shortcuts (work while editing)
+        if event.modifiers() & Qt.ControlModifier:
+            if event.key() == Qt.Key_B:
+                self._toggle_bold()
+                event.accept(); return
+            if event.key() == Qt.Key_I:
+                self._toggle_italic()
+                event.accept(); return
+
+        # Let base class insert the key first (so our expansion sees it)
         super().keyPressEvent(event)
 
-        # Expand nearest token at word boundaries
+        # After insertion, expand the nearest token at word boundaries
         if event.key() in {
             Qt.Key_Space, Qt.Key_Tab, Qt.Key_Comma,
             Qt.Key_Semicolon, Qt.Key_Period, Qt.Key_Colon
         }:
-            self._expand_slash_tokens(expand_all=False)
+            self._expand_last_slash_token_near_caret()
 
-    # ----- Greek expansion -----
-    def _expand_slash_tokens(self, expand_all: bool):
-        """
-        Replace '/word' or '\\word' with Greek if known.
-        If expand_all=True: process whole document; else: last token near caret.
-        """
-        if expand_all:
-            cur = QTextCursor(self.document())
-            cur.select(QTextCursor.Document)
-            text = cur.selectedText()
-            new_text = self._replace_all_tokens(text)
-            if new_text != text:
-                cur.insertText(new_text)
-            return
+    # ---------- Bold/Italic toggles ----------
+    def _toggle_bold(self):
+        cur = self.textCursor()
+        fmt = cur.charFormat()
+        new = QTextCharFormat(fmt)
+        is_bold = fmt.fontWeight() >= QFont.Bold
+        new.setFontWeight(QFont.Normal if is_bold else QFont.Bold)
+        self._merge_format_on_selection_or_word(cur, new)
 
-        # Local scan near caret (~64 chars back)
+    def _toggle_italic(self):
+        cur = self.textCursor()
+        fmt = cur.charFormat()
+        new = QTextCharFormat(fmt)
+        new.setFontItalic(not fmt.fontItalic())  # <-- fixed line (no '!' in Python)
+        self._merge_format_on_selection_or_word(cur, new)
+
+    def _merge_format_on_selection_or_word(self, cur: QTextCursor, fmt: QTextCharFormat):
+        """
+        Apply formatting to current selection; if no selection, apply to the
+        current typing point (so it affects text you type next).
+        """
+        if not cur.hasSelection():
+            cur.mergeCharFormat(fmt)  # affects current typing
+        else:
+            cur.mergeCharFormat(fmt)
+        # Ensure editor uses this updated cursor going forward
+        self.setTextCursor(cur)
+
+    # ---------- Greek expansion (preserve formatting) ----------
+    def _expand_last_slash_token_near_caret(self):
+        """
+        Find the closest '/word' or '\\word' within ~64 chars before the caret and replace it,
+        preserving the surrounding formatting.
+        """
         caret = self.textCursor().position()
         start = max(0, caret - 64)
 
@@ -116,45 +173,52 @@ class LabelItem(QGraphicsTextItem):
         scan.setPosition(caret, QTextCursor.KeepAnchor)
         segment = scan.selectedText()
 
-        rx = QRegularExpression(r"(?:/|\\)([A-Za-z]+)")
-        it = rx.globalMatch(segment)
-
+        # Find the last token in the scanned segment
+        py_rx = re.compile(r'(?:/|\\)([A-Za-z]+)')
         last = None
-        while it.hasNext():
-            last = it.next()
+        for m in py_rx.finditer(segment):
+            last = m
         if not last:
             return
 
-        name = last.captured(1)
-        symbol = GREEK_MAP.get(name)
+        name = last.group(1)
+        symbol = _greek_from_token(name)
         if not symbol:
             return
 
-        token_start = start + last.capturedStart(0)
-        token_end   = start + last.capturedEnd(0)
+        token_start = start + last.start(0)
+        token_end   = start + last.end(0)
 
+        # Replace exactly that span; new text inherits current char format at start
         repl = QTextCursor(self.document())
         repl.setPosition(token_start)
         repl.setPosition(token_end, QTextCursor.KeepAnchor)
         repl.insertText(symbol)
 
-    @staticmethod
-    def _replace_all_tokens(text: str) -> str:
-        rx = QRegularExpression(r"(?:/|\\)([A-Za-z]+)")
-        it = rx.globalMatch(text)
+    def _expand_all_slash_tokens_preserve_format(self):
+        """
+        Replace all '/word' or '\\word' tokens across the document with Greek symbols,
+        preserving formatting by replacing each token in-place with QTextCursor.
+        """
+        doc = self.document()
+        qrx = QRegularExpression(r"(?:/|\\)([A-Za-z]+)")
+        pos = 0
+        while True:
+            c = doc.find(qrx, pos)
+            if c.isNull():
+                break
+            token = c.selectedText()  # e.g. '/Alpha'
+            m = re.match(r'(?:/|\\)([A-Za-z]+)$', token)
+            if m:
+                sym = _greek_from_token(m.group(1))
+                if sym:
+                    c.insertText(sym)
+                    pos = c.position()  # continue after inserted symbol
+                    continue
+            # No replacement; move past this match
+            pos = c.selectionEnd()
 
-        out = []
-        last_i = 0
-        while it.hasNext():
-            m = it.next()
-            name = m.captured(1)
-            out.append(text[last_i:m.capturedStart(0)])
-            out.append(GREEK_MAP.get(name, text[m.capturedStart(0):m.capturedEnd(0)]))
-            last_i = m.capturedEnd(0)
-        out.append(text[last_i:])
-        return "".join(out)
-
-    # ----- Movement -----
+    # ---------- Movement / snapping ----------
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange:
             # Only snap when not actively editing

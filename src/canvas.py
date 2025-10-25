@@ -131,21 +131,41 @@ class WhiteboardView(QGraphicsView):
             return True
         return super().event(e)
 
-    # Let Shift+letter through while editing; otherwise block nav keys
     def keyPressEvent(self, e):
+        # If Ctrl+B / Ctrl+I on a label, allow formatting even if not editing yet
+        if (e.modifiers() & Qt.ControlModifier) and e.key() in (Qt.Key_B, Qt.Key_I):
+            try:
+                from items import LabelItem
+            except Exception:
+                LabelItem = None
+            target = None
+            fi = self.scene().focusItem()
+            if LabelItem and fi and isinstance(fi, LabelItem):
+                target = fi
+            elif LabelItem:
+                # fall back to first selected LabelItem
+                for it in self.scene().selectedItems():
+                    if isinstance(it, LabelItem):
+                        target = it
+                        break
+            if target:
+                target.handle_ctrl_format_shortcut(e.key())
+                e.accept()
+                return
+
         # If a text item is actively being edited, let keys pass through
         fi = self.scene().focusItem()
         if fi and hasattr(fi, "textInteractionFlags") and \
-           fi.textInteractionFlags() == Qt.TextEditorInteraction:
+        fi.textInteractionFlags() == Qt.TextEditorInteraction:
             super().keyPressEvent(e)
             return
 
         blocked_keys = {
             Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
             Qt.Key_Home, Qt.Key_End, Qt.Key_PageUp, Qt.Key_PageDown,
-            Qt.Key_Space  # prevent space from scrolling the view
+            Qt.Key_Space
         }
-        # Only block navigation keys or Ctrl/Alt combos (allow Shift)
+        # Only block navigation keys or Ctrl/Alt combos (allow Shift; Ctrl handled above)
         if e.key() in blocked_keys or (e.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
             e.accept()
             return
