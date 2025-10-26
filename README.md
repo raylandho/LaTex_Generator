@@ -1,3 +1,3 @@
 circuitlab.com (add objects)
-draw lines, other shapes, angle sign, pen, eraser
+pen is not the greatest
 test to see if you can copy a problem

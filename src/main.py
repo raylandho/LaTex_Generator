@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QFileDialog, QTabWidget, QInputDialog, QMessageBox
 )
 
-from constants import SCENE_BOUNDS
 from palette import Palette
 from canvas import WhiteboardScene, WhiteboardView
 
@@ -21,7 +20,7 @@ class MainWindow(QMainWindow):
 
         self.assets_dir = os.path.join(project_root, "assets")
 
-        # Palette + tabbed whiteboards
+        # Left: palette | Right: tabbed boards
         self.palette = Palette(self.assets_dir)
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
@@ -29,7 +28,6 @@ class MainWindow(QMainWindow):
         self.tabs.tabCloseRequested.connect(self._close_page_index)
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-        # Layout
         central = QWidget(self)
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -37,15 +35,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
 
-        # Toolbar
         self._make_toolbar()
 
         self.statusBar().showMessage(
-            "Use the toolbar to switch tools. Drag items from the palette. "
-            "Ctrl+L = Line tool, Ctrl+E = Eraser."
+            "Tools: Select | Line (Ctrl+L) | Pen (Ctrl+P) | Eraser (Ctrl+E). "
+            "Drag items from the palette. Alt bypasses grid snap."
         )
 
-        # Create first page
+        # First page
         self._add_page("Page 1")
 
     # ---------------- Toolbar ----------------
@@ -54,7 +51,7 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(Qt.TopToolBarArea, tb)
 
-        # --- Page Management ---
+        # Pages
         act_new_page = QAction("New Page", self)
         act_new_page.setShortcut("Ctrl+T")
         act_new_page.triggered.connect(self._add_page_dialog)
@@ -71,13 +68,17 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        # --- Tool Modes ---
+        # ---- Tool mode: Select / Line / Pen / Eraser ----
         self.act_select = QAction("Select", self)
         self.act_select.setCheckable(True)
 
         self.act_line = QAction("Line", self)
         self.act_line.setCheckable(True)
         self.act_line.setShortcut("Ctrl+L")
+
+        self.act_pen = QAction("Pen", self)
+        self.act_pen.setCheckable(True)
+        self.act_pen.setShortcut("Ctrl+P")
 
         self.act_eraser = QAction("Eraser", self)
         self.act_eraser.setCheckable(True)
@@ -87,23 +88,28 @@ class MainWindow(QMainWindow):
             v = self._current_view()
             if not v:
                 return
+            # update checks
             self.act_select.setChecked(name == "select")
             self.act_line.setChecked(name == "line")
+            self.act_pen.setChecked(name == "pen")
             self.act_eraser.setChecked(name == "eraser")
+            # apply to view
             v.set_tool(name)
 
         self.act_select.triggered.connect(lambda: set_tool("select"))
         self.act_line.triggered.connect(lambda: set_tool("line"))
+        self.act_pen.triggered.connect(lambda: set_tool("pen"))
         self.act_eraser.triggered.connect(lambda: set_tool("eraser"))
 
         tb.addAction(self.act_select)
         tb.addAction(self.act_line)
+        tb.addAction(self.act_pen)
         tb.addAction(self.act_eraser)
         self.act_select.setChecked(True)
 
         tb.addSeparator()
 
-        # --- Scene Actions ---
+        # Scene actions
         act_clear = QAction(self.style().standardIcon(QStyle.SP_TrashIcon), "Clear", self)
         act_clear.triggered.connect(self._clear_current_scene)
         tb.addAction(act_clear)
@@ -119,7 +125,7 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        # --- Resize ---
+        # Resize selected
         act_scale_up = QAction("Bigger", self)
         act_scale_up.setShortcut("Ctrl+=")
         act_scale_up.triggered.connect(lambda: self._scale_selected(1.1))
@@ -127,17 +133,20 @@ class MainWindow(QMainWindow):
 
         act_scale_down = QAction("Smaller", self)
         act_scale_down.setShortcut("Ctrl+-")
-        act_scale_down.triggered.connect(lambda: self._scale_selected(1 / 1.1))
+        act_scale_down.triggered.connect(lambda: self._scale_selected(1/1.1))
         tb.addAction(act_scale_down)
 
         tb.addSeparator()
 
-        # --- Export ---
+        # Export
         act_export_png = QAction("Export PNG", self)
         act_export_png.triggered.connect(self._export_png_current)
         tb.addAction(act_export_png)
 
-    # ---------------- Page Management ----------------
+        # expose setter for reuse if needed
+        self._set_tool_from_toolbar = set_tool
+
+    # ---------------- Pages ----------------
     def _add_page_dialog(self):
         name, ok = QInputDialog.getText(self, "New Page", "Page name:", text=f"Page {self.tabs.count()+1}")
         if ok and name.strip():
@@ -149,10 +158,11 @@ class MainWindow(QMainWindow):
         scene.setParent(view)
         idx = self.tabs.addTab(view, name)
         self.tabs.setCurrentIndex(idx)
-
-        # Apply whichever tool is active in toolbar
+        # apply currently active tool to the new tab
         if self.act_eraser.isChecked():
             view.set_tool("eraser")
+        elif self.act_pen.isChecked():
+            view.set_tool("pen")
         elif self.act_line.isChecked():
             view.set_tool("line")
         else:
@@ -185,19 +195,22 @@ class MainWindow(QMainWindow):
         v = self._current_view()
         if not v:
             return
+        # re-apply toolbar-selected tool to the new tab
         if self.act_eraser.isChecked():
             v.set_tool("eraser")
+        elif self.act_pen.isChecked():
+            v.set_tool("pen")
         elif self.act_line.isChecked():
             v.set_tool("line")
         else:
             v.set_tool("select")
 
-    # ---------------- Scene Actions ----------------
-    def _current_view(self):
+    # ---------------- Scene actions ----------------
+    def _current_view(self) -> WhiteboardView | None:
         w = self.tabs.currentWidget()
         return w if isinstance(w, WhiteboardView) else None
 
-    def _current_scene(self):
+    def _current_scene(self) -> WhiteboardScene | None:
         v = self._current_view()
         return v.scene() if v else None
 
@@ -245,7 +258,6 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export PNG", "diagram.png", "PNG (*.png)")
         if not path:
             return
-
         from PySide6.QtGui import QPixmap, QPainter
         rect = sc.itemsBoundingRect().adjusted(-40, -40, 40, 40)
         img = QPixmap(int(max(64, rect.width())), int(max(64, rect.height())))

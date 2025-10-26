@@ -1,7 +1,9 @@
 from __future__ import annotations
-from PySide6.QtCore import Qt, QRectF, QEvent, QPointF, QLineF
-from PySide6.QtGui import QPainter, QPen, QColor
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QGraphicsEllipseItem
+from PySide6.QtCore import Qt, QRectF, QPointF, QLineF
+from PySide6.QtGui import QPainter, QPen, QColor, QPainterPath
+from PySide6.QtWidgets import (
+    QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, QGraphicsPathItem
+)
 
 from constants import GRID_SIZE, SCENE_BOUNDS, ASSET_MAP
 from items import PixmapItem, LabelItem, LineItem, load_pixmap_for, snap_to_grid
@@ -68,7 +70,7 @@ class WhiteboardView(QGraphicsView):
         self.setAcceptDrops(True)
         self.viewport().setAcceptDrops(True)
 
-        # Overlay for transforms
+        # Overlay (selection box)
         self._overlay = None
         try:
             self.scene().selectionChanged.connect(self._on_selection_changed)
@@ -76,12 +78,21 @@ class WhiteboardView(QGraphicsView):
             pass
 
         # Tool states
-        self._tool = "select"        # select / line / eraser
+        self._tool = "select"        # select / line / pen / eraser
+
+        # Line tool
         self._drawing_line = False
         self._line_item = None
         self._line_p0 = QPointF()
 
-        # Eraser settings
+        # Pen tool (smoothed)
+        self._drawing_pen = False
+        self._pen_path: QPainterPath | None = None
+        self._pen_item: QGraphicsPathItem | None = None
+        self._pen_last: QPointF | None = None
+        self._pen_min_step = 2.0  # ignore jitter < 2 px
+
+        # Eraser
         self._erasing = False
         self._eraser_radius = 16
         self._eraser_circle = None
@@ -89,7 +100,7 @@ class WhiteboardView(QGraphicsView):
     # ---------- Tool management ----------
     def set_tool(self, name: str):
         self._tool = name
-        if name in ("line", "eraser"):
+        if name in ("line", "pen", "eraser"):
             self.setDragMode(QGraphicsView.NoDrag)
         else:
             self.setDragMode(QGraphicsView.RubberBandDrag)
@@ -97,6 +108,9 @@ class WhiteboardView(QGraphicsView):
         if name == "eraser":
             self.viewport().setCursor(Qt.CrossCursor)
             self._make_eraser_circle()
+        elif name == "pen":
+            self.viewport().setCursor(Qt.CrossCursor)
+            self._remove_eraser_circle()
         else:
             self.viewport().unsetCursor()
             self._remove_eraser_circle()
@@ -104,9 +118,9 @@ class WhiteboardView(QGraphicsView):
     # ---------- Eraser preview circle ----------
     def _make_eraser_circle(self):
         if not self._eraser_circle:
-            circle = QGraphicsEllipseItem(0, 0,
-                                          self._eraser_radius * 2,
-                                          self._eraser_radius * 2)
+            circle = QGraphicsEllipseItem(
+                0, 0, self._eraser_radius * 2, self._eraser_radius * 2
+            )
             pen = QPen(QColor(150, 150, 150, 180))
             pen.setCosmetic(True)
             circle.setPen(pen)
@@ -124,15 +138,24 @@ class WhiteboardView(QGraphicsView):
 
     # ---------- Mouse handling ----------
     def mousePressEvent(self, e):
-        if self._tool == "line" and e.button() == Qt.LeftButton:
-            self._start_line(e); return
-        elif self._tool == "eraser" and e.button() == Qt.LeftButton:
-            self._start_erasing(e); return
-        super().mousePressEvent(e)
+        if e.button() != Qt.LeftButton:
+            super().mousePressEvent(e)
+            return
+
+        if self._tool == "line":
+            self._start_line(e)
+        elif self._tool == "pen":
+            self._start_pen(e)
+        elif self._tool == "eraser":
+            self._start_erasing(e)
+        else:
+            super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
         if self._tool == "line" and self._drawing_line:
             self._update_line(e); return
+        elif self._tool == "pen" and self._drawing_pen:
+            self._continue_pen(e); return
         elif self._tool == "eraser":
             self._update_eraser_cursor(e)
             if self._erasing:
@@ -141,20 +164,27 @@ class WhiteboardView(QGraphicsView):
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
-        if self._tool == "line" and self._drawing_line and e.button() == Qt.LeftButton:
-            self._finish_line(e); return
-        elif self._tool == "eraser" and self._erasing and e.button() == Qt.LeftButton:
-            self._stop_erasing(); return
-        super().mouseReleaseEvent(e)
+        if e.button() != Qt.LeftButton:
+            super().mouseReleaseEvent(e)
+            return
 
-    # ---------- Line drawing ----------
+        if self._tool == "line" and self._drawing_line:
+            self._finish_line(e)
+        elif self._tool == "pen" and self._drawing_pen:
+            self._finish_pen()
+        elif self._tool == "eraser" and self._erasing:
+            self._stop_erasing()
+        else:
+            super().mouseReleaseEvent(e)
+
+    # ---------- Line tool ----------
     def _start_line(self, e):
         self._drawing_line = True
         p0 = self.mapToScene(e.position().toPoint())
         if not (e.modifiers() & Qt.AltModifier):
             p0 = snap_to_grid(p0)
         self._line_p0 = p0
-        self._line_item = LineItem(p0, p0)
+        self._line_item = LineItem(p0, p0)  # static line (non-selectable)
         self.scene().addItem(self._line_item)
 
     def _update_line(self, e):
@@ -173,7 +203,50 @@ class WhiteboardView(QGraphicsView):
             self.scene().removeItem(self._line_item)
         self._line_item = None
 
-    # ---------- Eraser logic ----------
+    # ---------- Pen tool (smoothed) ----------
+    def _start_pen(self, e):
+        self._drawing_pen = True
+        pos = self.mapToScene(e.position().toPoint())
+        if not (e.modifiers() & Qt.AltModifier):
+            pos = snap_to_grid(pos)
+        self._pen_last = pos
+        self._pen_path = QPainterPath(pos)
+        self._pen_item = QGraphicsPathItem(self._pen_path)
+        pen = QPen(Qt.black, 2)
+        pen.setCosmetic(True)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        self._pen_item.setPen(pen)
+        self._pen_item.setZValue(10)
+        self.scene().addItem(self._pen_item)
+
+    def _continue_pen(self, e):
+        if not self._pen_item or self._pen_path is None or self._pen_last is None:
+            return
+        cur = self.mapToScene(e.position().toPoint())
+        if not (e.modifiers() & Qt.AltModifier):
+            cur = snap_to_grid(cur)
+        # ignore tiny jitter
+        if (cur - self._pen_last).manhattanLength() < self._pen_min_step:
+            return
+        # Quadratic midpoint smoothing: control = last, end = midpoint(last, cur)
+        mid = QPointF((self._pen_last.x() + cur.x()) * 0.5,
+                      (self._pen_last.y() + cur.y()) * 0.5)
+        self._pen_path.quadTo(self._pen_last, mid)
+        self._pen_item.setPath(self._pen_path)
+        self._pen_last = cur
+
+    def _finish_pen(self):
+        # Nudge final segment so the tail closes nicely
+        if self._pen_item and self._pen_path is not None and self._pen_last is not None:
+            self._pen_path.lineTo(self._pen_last)
+            self._pen_item.setPath(self._pen_path)
+        self._drawing_pen = False
+        self._pen_path = None
+        self._pen_item = None
+        self._pen_last = None
+
+    # ---------- Eraser ----------
     def _start_erasing(self, e):
         self._erasing = True
         self._erase_at(e)
@@ -198,10 +271,12 @@ class WhiteboardView(QGraphicsView):
 
     def _erase_at(self, e):
         pos = self.mapToScene(e.position().toPoint())
-        rect = QRectF(pos.x() - self._eraser_radius,
-                      pos.y() - self._eraser_radius,
-                      self._eraser_radius * 2,
-                      self._eraser_radius * 2)
+        rect = QRectF(
+            pos.x() - self._eraser_radius,
+            pos.y() - self._eraser_radius,
+            self._eraser_radius * 2,
+            self._eraser_radius * 2
+        )
         hits = self.scene().items(rect)
         for it in hits:
             if it is self._eraser_circle or it is self._overlay:
@@ -209,7 +284,7 @@ class WhiteboardView(QGraphicsView):
             self.scene().removeItem(it)
             del it
 
-    # ---------- Overlay logic ----------
+    # ---------- Overlay ----------
     def _on_selection_changed(self):
         sel = list(self.scene().selectedItems())
         if len(sel) == 1:
@@ -223,7 +298,8 @@ class WhiteboardView(QGraphicsView):
         except Exception:
             return
         if self._overlay and getattr(self._overlay, "target", None) is target:
-            self._overlay.update_from_target(); return
+            self._overlay.update_from_target()
+            return
         self._drop_overlay()
         self._overlay = TransformOverlay(target)
         self.scene().addItem(self._overlay)
@@ -270,7 +346,6 @@ class WhiteboardView(QGraphicsView):
             br = item.boundingRect()
             item.setOffset(-br.width() / 2, -br.height() / 2)
 
-        # Drop position (snapped)
         pos = self.mapToScene(e.position().toPoint())
         if not (e.modifiers() & Qt.AltModifier):
             pos = snap_to_grid(pos)
