@@ -10,6 +10,8 @@ ASSET_MAP = {
     "Block": "block.png",
     "Spring": "spring.jpg",
     "Text": "textbox.jpg",  # icon for creating text labels
+    "Rectangle": "shape_rectangle.png",   # optional icon
+    "Ellipse":   "shape_ellipse.png",
 }
 
 # Greek slash/escape map for LabelItem (/alpha, \Delta, etc.)

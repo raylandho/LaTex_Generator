@@ -1,10 +1,10 @@
 from __future__ import annotations
 import os, re
 from PySide6.QtCore import Qt, QPointF, QRegularExpression, QLineF
-from PySide6.QtGui import QPixmap, QTextCursor, QFont, QTextCharFormat, QPen
+from PySide6.QtGui import QPixmap, QTextCursor, QFont, QTextCharFormat, QPen, QBrush
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsItem, QGraphicsTextItem, QApplication,
-    QGraphicsLineItem
+    QGraphicsLineItem, QGraphicsRectItem, QGraphicsEllipseItem
 )
 
 from constants import GRID_SIZE, GREEK_MAP
@@ -255,6 +255,53 @@ class LineItem(QGraphicsLineItem):
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionChange:
             # Snap whole line when moving (Alt to bypass)
+            if not (QApplication.keyboardModifiers() & Qt.AltModifier):
+                return snap_to_grid(value)
+        return super().itemChange(change, value)
+
+class RectItem(QGraphicsRectItem):
+    """Movable/selectable rectangle with cosmetic outline and grid snapping."""
+    def __init__(self, w: float = 120.0, h: float = 80.0, outline=Qt.black, fill=None, width: float = 2.0):
+        super().__init__(-w/2, -h/2, w, h)  # centered rect
+        self.setFlags(
+            QGraphicsItem.ItemIsMovable |
+            QGraphicsItem.ItemIsSelectable |
+            QGraphicsItem.ItemSendsGeometryChanges
+        )
+        pen = QPen(outline, width)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        if fill is None:
+            self.setBrush(Qt.NoBrush)
+        else:
+            self.setBrush(QBrush(fill))
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange:
+            if not (QApplication.keyboardModifiers() & Qt.AltModifier):
+                return snap_to_grid(value)
+        return super().itemChange(change, value)
+
+
+class EllipseItem(QGraphicsEllipseItem):
+    """Movable/selectable ellipse with cosmetic outline and grid snapping."""
+    def __init__(self, w: float = 120.0, h: float = 80.0, outline=Qt.black, fill=None, width: float = 2.0):
+        super().__init__(-w/2, -h/2, w, h)  # centered ellipse
+        self.setFlags(
+            QGraphicsItem.ItemIsMovable |
+            QGraphicsItem.ItemIsSelectable |
+            QGraphicsItem.ItemSendsGeometryChanges
+        )
+        pen = QPen(outline, width)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        if fill is None:
+            self.setBrush(Qt.NoBrush)
+        else:
+            self.setBrush(QBrush(fill))
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange:
             if not (QApplication.keyboardModifiers() & Qt.AltModifier):
                 return snap_to_grid(value)
         return super().itemChange(change, value)

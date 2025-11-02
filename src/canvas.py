@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 
 from constants import GRID_SIZE, SCENE_BOUNDS, ASSET_MAP
-from items import PixmapItem, LabelItem, LineItem, load_pixmap_for, snap_to_grid
+from items import PixmapItem, LabelItem, LineItem, RectItem, EllipseItem, load_pixmap_for, snap_to_grid
 from palette import MIME_TYPE
 
 
@@ -339,6 +339,15 @@ class WhiteboardView(QGraphicsView):
 
         if label == "Text":
             item = LabelItem("m")
+
+        elif label == "Rectangle":
+            item = RectItem()  # default 120x80, no fill
+            item.setTransformOriginPoint(item.boundingRect().center())
+
+        elif label == "Ellipse":
+            item = EllipseItem()  # default 120x80, no fill
+            item.setTransformOriginPoint(item.boundingRect().center())
+
         else:
             filename = ASSET_MAP.get(label)
             pix = load_pixmap_for(filename, self.assets_dir)
