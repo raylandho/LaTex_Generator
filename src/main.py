@@ -84,6 +84,11 @@ class MainWindow(QMainWindow):
         self.act_eraser.setCheckable(True)
         self.act_eraser.setShortcut("Ctrl+E")
 
+        self.act_arc = QAction("Arc", self)
+        self.act_arc.setCheckable(True)
+        self.act_arc.setShortcut("Ctrl+A")  # note: conflicts with Select All in text contexts; change if you prefer
+        tb.addAction(self.act_arc)
+
         def set_tool(name: str):
             v = self._current_view()
             if not v:
@@ -93,6 +98,7 @@ class MainWindow(QMainWindow):
             self.act_line.setChecked(name == "line")
             self.act_pen.setChecked(name == "pen")
             self.act_eraser.setChecked(name == "eraser")
+            getattr(self, "act_arc").setChecked(name == "arc")
             # apply to view
             v.set_tool(name)
 
@@ -100,6 +106,7 @@ class MainWindow(QMainWindow):
         self.act_line.triggered.connect(lambda: set_tool("line"))
         self.act_pen.triggered.connect(lambda: set_tool("pen"))
         self.act_eraser.triggered.connect(lambda: set_tool("eraser"))
+        self.act_arc.triggered.connect(lambda: set_tool("arc"))
 
         tb.addAction(self.act_select)
         tb.addAction(self.act_line)

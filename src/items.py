@@ -1,10 +1,10 @@
 from __future__ import annotations
 import os, re
 from PySide6.QtCore import Qt, QPointF, QRegularExpression, QLineF
-from PySide6.QtGui import QPixmap, QTextCursor, QFont, QTextCharFormat, QPen, QBrush
+from PySide6.QtGui import QPixmap, QTextCursor, QFont, QTextCharFormat, QPen, QBrush, QPainterPath
 from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsItem, QGraphicsTextItem, QApplication,
-    QGraphicsLineItem, QGraphicsRectItem, QGraphicsEllipseItem
+    QGraphicsLineItem, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsPathItem
 )
 
 from constants import GRID_SIZE, GREEK_MAP
@@ -305,3 +305,40 @@ class EllipseItem(QGraphicsEllipseItem):
             if not (QApplication.keyboardModifiers() & Qt.AltModifier):
                 return snap_to_grid(value)
         return super().itemChange(change, value)
+    
+class ArcItem(QGraphicsPathItem):
+    """
+    Circle-arc item defined by center, radius, start angle, and sweep.
+    Cosmetic pen so it stays 2px on-screen regardless of zoom.
+    Angles are in degrees, 0 at +X (3 o'clock), CCW positive.
+    """
+    def __init__(self, center: QPointF, radius: float, start_deg: float, sweep_deg: float,
+                 color=Qt.black, width: float = 2.0):
+        super().__init__()
+        pen = QPen(color, width)
+        pen.setCosmetic(True)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        self.setPen(pen)
+        self.setZValue(10)
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.update_arc(center, radius, start_deg, sweep_deg)
+
+    def update_arc(self, center: QPointF, radius: float, start_deg: float, sweep_deg: float):
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainterPath
+
+        if radius <= 0.0:
+            self.setPath(QPainterPath())
+            return
+
+        rect = QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2)
+
+        # Our start_deg/sweep_deg are CCW; Qt expects clockwise angles.
+        start_deg_qt = -start_deg
+        sweep_deg_qt = -sweep_deg
+
+        path = QPainterPath()
+        path.arcMoveTo(rect, start_deg_qt)
+        path.arcTo(rect, start_deg_qt, sweep_deg_qt)
+        self.setPath(path)

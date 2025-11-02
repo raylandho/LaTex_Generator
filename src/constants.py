@@ -7,11 +7,12 @@ SCENE_BOUNDS = QRectF(-5000, -5000, 10000, 10000)
 # Logical item names mapped to asset filenames inside ./assets
 ASSET_MAP = {
     "Arrow": "arrow.png",
-    "Block": "block.png",
-    "Spring": "spring.jpg",
+    "Current source": "current_source.png",
+    "resistor": "resistor.png",
     "Text": "textbox.jpg",  # icon for creating text labels
     "Rectangle": "shape_rectangle.png",   # optional icon
     "Ellipse":   "shape_ellipse.png",
+    "Voltage Source": "voltage_source.png",
 }
 
 # Greek slash/escape map for LabelItem (/alpha, \Delta, etc.)
