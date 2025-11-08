@@ -13,6 +13,10 @@ ASSET_MAP = {
     "Rectangle": "shape_rectangle.png",   # optional icon
     "Ellipse":   "shape_ellipse.png",
     "Voltage Source": "voltage_source.png",
+    "Capacitor": "capacitor.png",
+    "Inductor": "inductor.png",
+    "Battery": "battery.png",
+    "Time Controlled Switch": "time_controlled_switch.png",
 }
 
 # Greek slash/escape map for LabelItem (/alpha, \Delta, etc.)
