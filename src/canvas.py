@@ -91,7 +91,7 @@ class WhiteboardView(QGraphicsView):
         self.viewport().setAttribute(Qt.WA_OpaquePaintEvent, True)
         self.viewport().setAttribute(Qt.WA_NoSystemBackground, True)
 
-        # Disable zoom/pan by default (you can add Ctrl+Wheel zoom later)
+        # Disable zoom/pan by default
         self.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.setResizeAnchor(QGraphicsView.NoAnchor)
         self.setDragMode(QGraphicsView.RubberBandDrag)
@@ -104,6 +104,8 @@ class WhiteboardView(QGraphicsView):
         self._overlay = None
         try:
             self.scene().selectionChanged.connect(self._on_selection_changed)
+            # NEW: keep overlay synced while dragging/moving
+            self.scene().changed.connect(self._on_scene_changed)
         except Exception:
             pass
 
@@ -224,17 +226,38 @@ class WhiteboardView(QGraphicsView):
 
     def mouseMoveEvent(self, e):
         if self._tool == "line" and self._drawing_line:
-            self._update_line(e); return
+            self._update_line(e); 
+            # keep overlay synced
+            if self._overlay:
+                try: self._overlay.update_from_target()
+                except Exception: pass
+            return
         elif self._tool == "pen" and self._drawing_pen:
-            self._continue_pen(e); return
+            self._continue_pen(e);
+            if self._overlay:
+                try: self._overlay.update_from_target()
+                except Exception: pass
+            return
         elif self._tool == "eraser":
             self._update_eraser_cursor(e)
             if self._erasing:
                 self._erase_at(e)
+            if self._overlay:
+                try: self._overlay.update_from_target()
+                except Exception: pass
             return
         elif self._tool == "arc" and self._arc_stage >= 1:
-            self._arc_update_preview(e); return
+            self._arc_update_preview(e)
+            if self._overlay:
+                try: self._overlay.update_from_target()
+                except Exception: pass
+            return
+
+        # default path
         super().mouseMoveEvent(e)
+        if self._overlay:
+            try: self._overlay.update_from_target()
+            except Exception: pass
 
     def mouseReleaseEvent(self, e):
         if e.button() != Qt.LeftButton:
@@ -255,7 +278,6 @@ class WhiteboardView(QGraphicsView):
         k = e.key()
         if k == Qt.Key_Control:
             self._mod_ctrl = True
-            # instant preview flip if in arc gesture
             if self._tool == "arc" and self._arc_stage == 2:
                 self._arc_update_preview_from_point(None)
         elif k == Qt.Key_Shift:
@@ -284,6 +306,15 @@ class WhiteboardView(QGraphicsView):
         # reset modifier tracking if we lose focus mid-gesture
         self._mod_ctrl = self._mod_shift = self._mod_alt = False
         super().focusOutEvent(e)
+
+    # ---------- Scene/overlay sync ----------
+    def _on_scene_changed(self, *_):
+        # Keep the blue overlay synced while items move/drag/transform
+        if self._overlay:
+            try:
+                self._overlay.update_from_target()
+            except Exception:
+                pass
 
     # ---------- Line tool ----------
     def _start_line(self, e):
@@ -590,8 +621,8 @@ class WhiteboardView(QGraphicsView):
 
     def _arc_finalize(self, end_pos: QPointF):
         # Use tracked modifiers for reliability
-        mods_ctrl = self._mod_ctrl
-        mods_alt  = self._mod_alt
+        mods_ctrl  = self._mod_ctrl
+        mods_alt   = self._mod_alt
         mods_shift = self._mod_shift
 
         c = self._arc_center
@@ -614,7 +645,7 @@ class WhiteboardView(QGraphicsView):
         if mods_shift:
             sweep_ccw = sweep_ccw - 360.0 if sweep_ccw >= 0 else sweep_ccw + 360.0
 
-        # ArcItem expects CCW; it converts internally to Qt's CW with arcMoveTo/arcTo
+        # ArcItem expects CCW; it converts internally to Qt's CW
         arc = ArcItem(c, r, start_deg_ccw, sweep_ccw)
         self.scene().addItem(arc)
         arc.setSelected(True)

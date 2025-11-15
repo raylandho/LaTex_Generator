@@ -17,6 +17,11 @@ ASSET_MAP = {
     "Inductor": "inductor.png",
     "Battery": "battery.png",
     "Time Controlled Switch": "time_controlled_switch.png",
+    "Voltage Controlled Switch": "voltage_controlled_switch.png",
+    "Ammeter": "ammeter.png",
+    "Digital Probe": "digital_probe.png",
+    "Voltmeter": "voltmeter.png",
+    "Lightbulb": "lightbulb.png",
 }
 
 # Greek slash/escape map for LabelItem (/alpha, \Delta, etc.)

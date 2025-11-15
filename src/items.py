@@ -242,7 +242,7 @@ class LabelItem(QGraphicsTextItem):
 
 class LineItem(QGraphicsLineItem):
     """Selectable/movable straight line with cosmetic pen and grid snapping."""
-    def __init__(self, p1: QPointF, p2: QPointF, color=Qt.black, width: float = 2.0):
+    def __init__(self, p1: QPointF, p2: QPointF, color=Qt.black, width: float = 4.0):
         super().__init__(QLineF(p1, p2))
         # Explicitly non-selectable & non-movable
         self.setFlag(QGraphicsItem.ItemIsSelectable, False)
@@ -285,7 +285,7 @@ class RectItem(QGraphicsRectItem):
 
 class EllipseItem(QGraphicsEllipseItem):
     """Movable/selectable ellipse with cosmetic outline and grid snapping."""
-    def __init__(self, w: float = 120.0, h: float = 80.0, outline=Qt.black, fill=None, width: float = 2.0):
+    def __init__(self, w: float = 120.0, h: float = 80.0, outline=Qt.black, fill=None, width: float = 3.0):
         super().__init__(-w/2, -h/2, w, h)  # centered ellipse
         self.setFlags(
             QGraphicsItem.ItemIsMovable |
@@ -313,7 +313,7 @@ class ArcItem(QGraphicsPathItem):
     Angles are in degrees, 0 at +X (3 o'clock), CCW positive.
     """
     def __init__(self, center: QPointF, radius: float, start_deg: float, sweep_deg: float,
-                 color=Qt.black, width: float = 2.0):
+                 color=Qt.black, width: float = 3.0):
         super().__init__()
         pen = QPen(color, width)
         pen.setCosmetic(True)
