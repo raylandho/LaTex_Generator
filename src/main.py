@@ -150,6 +150,10 @@ class MainWindow(QMainWindow):
         act_export_png.triggered.connect(self._export_png_current)
         tb.addAction(act_export_png)
 
+        act_export_tex = QAction("Export LaTeX", self)
+        act_export_tex.triggered.connect(self._export_latex_current)
+        tb.addAction(act_export_tex)
+
         # expose setter for reuse if needed
         self._set_tool_from_toolbar = set_tool
 
@@ -273,6 +277,57 @@ class MainWindow(QMainWindow):
         sc.render(p, source=rect)
         p.end()
         img.save(path, "PNG")
+
+    def _export_latex_current(self):
+        """Export the current scene as a standalone LaTeX document using TikZ."""
+        view = self._current_view()
+        sc = self._current_scene()
+        if not (view and sc):
+            return
+
+        from latex_export import scene_to_tikz
+
+        # Ask user for destination .tex file
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export LaTeX",
+            "diagram.tex",
+            "TeX files (*.tex);;All files (*)",
+        )
+        if not path:
+            return
+
+        # Use the last path component of assets_dir, e.g. ".../project/assets" → "assets"
+        image_dir_name = os.path.basename(self.assets_dir) or "assets"
+
+        tikz_body = scene_to_tikz(sc, image_dir=image_dir_name)
+
+        # Wrap into a minimal standalone document
+        doc = (
+            r"\documentclass[tikz,border=5pt]{standalone}" "\n"
+            r"\usepackage{graphicx}" "\n"
+            r"\usepackage{circuitikz}" "\n"
+            r"\begin{document}" "\n"
+            + tikz_body +
+            r"\end{document}" "\n"
+        )
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(doc)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Export LaTeX",
+                f"Could not write file:\n{exc}",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Export LaTeX",
+            "LaTeX file exported.\nCompile it with (pdf|xe|lua)latex to get the diagram."
+        )
 
 
 def main():

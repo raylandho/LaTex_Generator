@@ -226,38 +226,48 @@ class WhiteboardView(QGraphicsView):
 
     def mouseMoveEvent(self, e):
         if self._tool == "line" and self._drawing_line:
-            self._update_line(e); 
+            self._update_line(e)
             # keep overlay synced
             if self._overlay:
-                try: self._overlay.update_from_target()
-                except Exception: pass
+                try:
+                    self._overlay.update_from_target()
+                except Exception:
+                    pass
             return
         elif self._tool == "pen" and self._drawing_pen:
-            self._continue_pen(e);
+            self._continue_pen(e)
             if self._overlay:
-                try: self._overlay.update_from_target()
-                except Exception: pass
+                try:
+                    self._overlay.update_from_target()
+                except Exception:
+                    pass
             return
         elif self._tool == "eraser":
             self._update_eraser_cursor(e)
             if self._erasing:
                 self._erase_at(e)
             if self._overlay:
-                try: self._overlay.update_from_target()
-                except Exception: pass
+                try:
+                    self._overlay.update_from_target()
+                except Exception:
+                    pass
             return
         elif self._tool == "arc" and self._arc_stage >= 1:
             self._arc_update_preview(e)
             if self._overlay:
-                try: self._overlay.update_from_target()
-                except Exception: pass
+                try:
+                    self._overlay.update_from_target()
+                except Exception:
+                    pass
             return
 
         # default path
         super().mouseMoveEvent(e)
         if self._overlay:
-            try: self._overlay.update_from_target()
-            except Exception: pass
+            try:
+                self._overlay.update_from_target()
+            except Exception:
+                pass
 
     def mouseReleaseEvent(self, e):
         if e.button() != Qt.LeftButton:
@@ -727,6 +737,8 @@ class WhiteboardView(QGraphicsView):
             filename = ASSET_MAP.get(label)
             pix = load_pixmap_for(filename, self.assets_dir)
             item = PixmapItem(pix)
+            # NEW: remember the palette label for LaTeX export
+            item.setData(0, label)
             br = item.boundingRect()
             item.setOffset(-br.width() / 2, -br.height() / 2)
 
