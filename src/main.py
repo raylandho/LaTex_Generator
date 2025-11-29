@@ -12,6 +12,42 @@ from palette import Palette
 from canvas import WhiteboardScene, WhiteboardView
 
 
+def get_project_root() -> str:
+    """
+    Return a directory that contains the 'assets' folder.
+
+    Handles:
+      - Normal source run (project_root/assets)
+      - PyInstaller onedir with assets in:
+            dist/PhysDraw/assets
+        or  dist/PhysDraw/_internal/assets
+        or  dist/PhysDraw_internal/assets
+    """
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+
+        parent = os.path.dirname(exe_dir)
+        name   = os.path.basename(exe_dir)
+
+        candidates = [
+            exe_dir,                                  # dist/PhysDraw/
+            os.path.join(exe_dir, "_internal"),       # dist/PhysDraw/_internal/
+            os.path.join(parent, name + "_internal"), # dist/PhysDraw_internal/
+        ]
+
+        for base in candidates:
+            assets_path = os.path.join(base, "assets")
+            if os.path.isdir(assets_path):
+                return base
+
+        # Fallback: at least return exe dir
+        return exe_dir
+
+    # --- running from source ---
+    root = os.path.dirname(os.path.abspath(__file__))  # src/
+    return os.path.dirname(root)                       # project root (contains assets/)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, project_root: str):
         super().__init__()
@@ -68,7 +104,7 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        # ---- Tool mode: Select / Line / Pen / Eraser ----
+        # ---- Tool mode: Select / Line / Pen / Eraser / Arc ----
         self.act_select = QAction("Select", self)
         self.act_select.setCheckable(True)
 
@@ -86,7 +122,7 @@ class MainWindow(QMainWindow):
 
         self.act_arc = QAction("Arc", self)
         self.act_arc.setCheckable(True)
-        self.act_arc.setShortcut("Ctrl+A")  # note: conflicts with Select All in text contexts; change if you prefer
+        self.act_arc.setShortcut("Ctrl+A")  # note: conflicts with Select All in text contexts
         tb.addAction(self.act_arc)
 
         def set_tool(name: str):
@@ -145,14 +181,15 @@ class MainWindow(QMainWindow):
 
         tb.addSeparator()
 
-        # Export
+        # Export PNG
         act_export_png = QAction("Export PNG", self)
         act_export_png.triggered.connect(self._export_png_current)
         tb.addAction(act_export_png)
 
-        act_export_tex = QAction("Export LaTeX", self)
-        act_export_tex.triggered.connect(self._export_latex_current)
-        tb.addAction(act_export_tex)
+        # Export LaTeX (TikZ / circuitikz)
+        act_export_latex = QAction("Export LaTeX", self)
+        act_export_latex.triggered.connect(self._export_latex_current)
+        tb.addAction(act_export_latex)
 
         # expose setter for reuse if needed
         self._set_tool_from_toolbar = set_tool
@@ -216,7 +253,7 @@ class MainWindow(QMainWindow):
         else:
             v.set_tool("select")
 
-    # ---------------- Scene actions ----------------
+    # ---------------- Scene helpers ----------------
     def _current_view(self) -> WhiteboardView | None:
         w = self.tabs.currentWidget()
         return w if isinstance(w, WhiteboardView) else None
@@ -261,6 +298,7 @@ class MainWindow(QMainWindow):
                 f.setPointSizeF(max(6.0, min(96.0, s * factor)))
                 it.setFont(f)
 
+    # ---------------- Export ----------------
     def _export_png_current(self):
         view = self._current_view()
         sc = self._current_scene()
@@ -279,10 +317,9 @@ class MainWindow(QMainWindow):
         img.save(path, "PNG")
 
     def _export_latex_current(self):
-        """Export the current scene as a standalone LaTeX document using TikZ."""
-        view = self._current_view()
+        """Export the current scene as a standalone LaTeX document using TikZ/circuitikz."""
         sc = self._current_scene()
-        if not (view and sc):
+        if not sc:
             return
 
         from latex_export import scene_to_tikz
@@ -297,13 +334,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        # Compute the path from the .tex file location to the assets directory
-        tex_dir = os.path.dirname(path) or "."
-        rel_assets = os.path.relpath(self.assets_dir, start=tex_dir)
-        # LaTeX likes forward slashes
-        rel_assets = rel_assets.replace("\\", "/")
-
-        tikz_body = scene_to_tikz(sc, image_dir=rel_assets)
+        tikz_body = scene_to_tikz(sc)
 
         # Wrap into a minimal standalone document
         doc = (
@@ -332,10 +363,10 @@ class MainWindow(QMainWindow):
             "LaTeX file exported.\nCompile it with (pdf|xe|lua)latex to get the diagram."
         )
 
+
 def main():
     app = QApplication(sys.argv)
-    root = os.path.dirname(os.path.abspath(__file__))  # src/
-    project_root = os.path.dirname(root)               # project root
+    project_root = get_project_root()
     win = MainWindow(project_root=project_root)
     win.show()
     sys.exit(app.exec())
