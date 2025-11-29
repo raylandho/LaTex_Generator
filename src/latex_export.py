@@ -8,11 +8,11 @@ from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsItem,
-    QGraphicsLineItem,
+    QGraphicsPixmapItem,
     QGraphicsTextItem,
+    QGraphicsLineItem,
     QGraphicsRectItem,
     QGraphicsEllipseItem,
-    QGraphicsPixmapItem,
     QGraphicsPathItem,
 )
 from PySide6.QtGui import QPainterPath
@@ -73,7 +73,7 @@ def _escape_latex(text: str) -> str:
 def _path_to_poly(path: QPainterPath) -> List[QPointF]:
     """
     Convert a QPainterPath into a simple polyline by walking its elements.
-    This is good enough for lines, rectangles, ellipses, arcs, and pen strokes.
+    This is good enough for rectangles, ellipses, arcs, and pen strokes.
     """
     pts: List[QPointF] = []
     for i in range(path.elementCount()):
@@ -101,16 +101,14 @@ def scene_to_tikz(scene: QGraphicsScene, image_dir: str = "assets") -> str:
     - Coordinates are in *pixels* relative to the diagram's bounding box.
     - We set [x=0.05cm, y=0.05cm], so 1 px ~ 0.05 cm (tweak as needed).
     - Supports:
-        * Lines (QGraphicsLineItem)
-        * Rectangles / ellipses (approx. by polylines)
-        * Freehand pen strokes (selectable QGraphicsPathItem)
-        * Text labels (QGraphicsTextItem)
         * Pixmaps:
             - Known labels → circuitikz elements (to[R], to[C], etc.)
             - Others → \\includegraphics from `image_dir` + ASSET_MAP
+        * Text labels (QGraphicsTextItem)
+        * Wires: QGraphicsLineItem → single \draw p1 -- p2;
+        * Other drawable items via their shape() as polylines
     - Ignores:
         * The blue transform overlay + its handles (TransformOverlay)
-        * Non-selectable helper items (eraser circle, arc previews, etc.)
     """
     items = [it for it in scene.items() if it.isVisible()]
     if not items:
@@ -201,7 +199,7 @@ def scene_to_tikz(scene: QGraphicsScene, image_dir: str = "assets") -> str:
             lines.append(rf"  \node[anchor=center] at {p} {{{text}}};")
             continue
 
-        # ---------- Straight lines ----------
+        # ---------- Wires: QGraphicsLineItem → single centerline ----------
         if isinstance(it, QGraphicsLineItem):
             line = it.line()
             p1 = fmt_point(it.mapToScene(line.p1()))
@@ -209,40 +207,22 @@ def scene_to_tikz(scene: QGraphicsScene, image_dir: str = "assets") -> str:
             lines.append(rf"  \draw {p1} -- {p2};")
             continue
 
-        # ---------- Rectangles (content ones only) ----------
-        if isinstance(it, QGraphicsRectItem):
-            # Only export if it's meant to be content (selectable)
-            if not bool(it.flags() & QGraphicsItem.ItemIsSelectable):
+        # ---------- Rectangles / Ellipses / Paths: export shape() polyline ----------
+        if isinstance(it, (QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsPathItem)):
+            # For helper items (eraser circle, previews), many are non-selectable.
+            # We can optionally skip non-selectable items, but for now we export all.
+            try:
+                path = it.mapToScene(it.shape())
+            except Exception:
+                lines.append(f"% [ignored item type (no shape): {type(it).__name__}]")
                 continue
-            path = it.mapToScene(it.shape())
-            pts = _path_to_poly(path)
-            if len(pts) >= 2:
-                seq = " -- ".join(fmt_point(p) for p in pts)
-                lines.append(rf"  \draw {seq};")
-            continue
 
-        # ---------- Ellipses / circles (content ones only) ----------
-        if isinstance(it, QGraphicsEllipseItem):
-            if not bool(it.flags() & QGraphicsItem.ItemIsSelectable):
-                continue
-            path = it.mapToScene(it.shape())
             pts = _path_to_poly(path)
             if len(pts) >= 2:
                 seq = " -- ".join(fmt_point(p) for p in pts)
-                lines.append(rf"  \draw {seq};  % ellipse approximation")
-            continue
-
-        # ---------- Paths (pen strokes, arcs, etc.) ----------
-        if isinstance(it, QGraphicsPathItem):
-            # Heuristic: only export selectable paths (pen strokes, arcs),
-            # not helper overlays or previews
-            if not bool(it.flags() & QGraphicsItem.ItemIsSelectable):
-                continue
-            path = it.mapToScene(it.path())
-            pts = _path_to_poly(path)
-            if len(pts) >= 2:
-                seq = " -- ".join(fmt_point(p) for p in pts)
-                lines.append(rf"  \draw {seq};  % freehand/arc path")
+                lines.append(rf"  \draw {seq};  % {type(it).__name__} shape")
+            else:
+                lines.append(f"% [shape too small: {type(it).__name__}]")
             continue
 
         # Fallback: document that we skipped some odd item
