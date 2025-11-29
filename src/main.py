@@ -297,10 +297,13 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        # Use the last path component of assets_dir, e.g. ".../project/assets" → "assets"
-        image_dir_name = os.path.basename(self.assets_dir) or "assets"
+        # Compute the path from the .tex file location to the assets directory
+        tex_dir = os.path.dirname(path) or "."
+        rel_assets = os.path.relpath(self.assets_dir, start=tex_dir)
+        # LaTeX likes forward slashes
+        rel_assets = rel_assets.replace("\\", "/")
 
-        tikz_body = scene_to_tikz(sc, image_dir=image_dir_name)
+        tikz_body = scene_to_tikz(sc, image_dir=rel_assets)
 
         # Wrap into a minimal standalone document
         doc = (
@@ -328,7 +331,6 @@ class MainWindow(QMainWindow):
             "Export LaTeX",
             "LaTeX file exported.\nCompile it with (pdf|xe|lua)latex to get the diagram."
         )
-
 
 def main():
     app = QApplication(sys.argv)

@@ -1,7 +1,7 @@
 # latex_export.py
 from __future__ import annotations
 
-from typing import List
+from typing import List, Tuple
 import math
 
 from PySide6.QtCore import QPointF
@@ -17,30 +17,34 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QPainterPath
 
-from constants import ASSET_MAP
+from constants import ASSET_MAP  # not used directly, but fine to keep
 
-# Optional: used only to ignore the blue transform overlay & handles in export
+
+# Optional: used only to ignore the blue transform overlay & handles
 try:
     from handles import TransformOverlay
 except Exception:  # pragma: no cover
     TransformOverlay = None
 
 
-# ---------- Mapping: palette labels → circuitikz element keys ----------
+# ---------- Mapping: palette labels → (circuitikz element, default label) ----------
 
-CIRCUIT_ELEMENT_MAP = {
-    # keys must match the *labels* from ASSET_MAP / palette
-    "resistor": "R",
-    "Capacitor": "C",
-    "Inductor": "L",
-    "Battery": "battery",
-    "Voltage Source": "V",
-    "Current source": "I",
-    "Ammeter": "ammeter",
-    "Voltmeter": "voltmeter",
-    "Lightbulb": "lamp",  # adjust if your circuitikz version uses a different name
-    # "Time Controlled Switch": "switch",           # enable & tweak if desired
-    # "Voltage Controlled Switch": "switch",        # or a more specific element
+# default_label is what we put inside the circle via "l=...".
+# For plain elements (resistor, capacitor, etc.) we use None.
+CIRCUIT_ELEMENT_MAP: dict[str, Tuple[str, str | None]] = {
+    "resistor": ("R", None),
+    "Capacitor": ("C", None),
+    "Inductor": ("L", None),
+    "Battery": ("battery", None),
+
+    # Sources & meters: give them a visible letter inside the circle
+    "Voltage Source": ("V", "V"),
+    "Current source": ("I", "I"),
+    "Ammeter": ("ammeter", "A"),
+    "Voltmeter": ("voltmeter", "V"),
+
+    "Lightbulb": ("lamp", None),  # classic lamp symbol
+    # Other icons (switches, probe, etc.) are handled as generic boxes below.
 }
 
 
@@ -98,12 +102,16 @@ def scene_to_tikz(scene: QGraphicsScene, image_dir: str = "assets") -> str:
     """
     Convert the current scene contents into a TikZ picture.
 
+    NOTE: This version does **not** use PNGs in LaTeX at all.
+    Everything is vector (TikZ + circuitikz), so the .tex file is
+    completely self-contained.
+
     - Coordinates are in *pixels* relative to the diagram's bounding box.
     - We set [x=0.05cm, y=0.05cm], so 1 px ~ 0.05 cm (tweak as needed).
     - Supports:
-        * Pixmaps:
-            - Known labels → circuitikz elements (to[R], to[C], etc.)
-            - Others → \\includegraphics from `image_dir` + ASSET_MAP
+        * Pixmaps with known labels → circuitikz elements (to[R], to[C], etc.),
+          with default labels for sources/meters so circles aren’t empty.
+        * Other pixmaps → drawn boxes with the label text inside
         * Text labels (QGraphicsTextItem)
         * Wires: QGraphicsLineItem → single \draw p1 -- p2;
         * Other drawable items via their shape() as polylines
@@ -141,14 +149,15 @@ def scene_to_tikz(scene: QGraphicsScene, image_dir: str = "assets") -> str:
             if it.parentItem() is not None and isinstance(it.parentItem(), TransformOverlay):
                 continue
 
-        # ---------- Pixmaps → circuitikz or includegraphics ----------
+        # ---------- Pixmaps → circuitikz or generic TikZ node ----------
         if isinstance(it, QGraphicsPixmapItem):
             label = it.data(0)
             center = it.mapToScene(it.boundingRect().center())
+            p = fmt_point(center)
 
+            # 1) Known circuit elements → circuitikz with optional default label
             if isinstance(label, str) and label in CIRCUIT_ELEMENT_MAP:
-                # Use circuitikz element instead of PNG
-                elem = CIRCUIT_ELEMENT_MAP[label]
+                elem, default_label = CIRCUIT_ELEMENT_MAP[label]
 
                 br = it.boundingRect()
 
@@ -174,21 +183,26 @@ def scene_to_tikz(scene: QGraphicsScene, image_dir: str = "assets") -> str:
 
                 t1 = fmt_point(p1)
                 t2 = fmt_point(p2)
-                lines.append(rf"  \draw {t1} to[{elem}] {t2};")
+
+                # Build the style: "elem" or "elem, l=V" etc.
+                if default_label:
+                    style = f"{elem}, l={default_label}"
+                else:
+                    style = elem
+
+                lines.append(rf"  \draw {t1} to[{style}] {t2};")
                 continue
 
-            # Fallback: generic image node
-            p = fmt_point(center)
-            filename = ASSET_MAP.get(label, None) if label is not None else None
-            if filename:
-                tex_img = f"{image_dir}/{filename}"
-                lines.append(
-                    rf"  \node at {p} {{\includegraphics[width=2cm]{{{tex_img}}}}};"
-                )
-            else:
-                lines.append(
-                    rf"  % image at {p} (no filename metadata; edit manually)"
-                )
+            # 2) Everything else → generic drawn box with label text
+            label_text = _escape_latex(str(label)) if label is not None else "?"
+            br = it.boundingRect()
+            # Convert px size to cm based on x=0.05cm scaling
+            w_cm = br.width() * 0.05
+            h_cm = br.height() * 0.05
+            lines.append(
+                rf"  \node[draw,align=center,minimum width={w_cm:.2f}cm,"
+                rf" minimum height={h_cm:.2f}cm] at {p} {{{label_text}}};"
+            )
             continue
 
         # ---------- Text labels ----------
@@ -209,8 +223,6 @@ def scene_to_tikz(scene: QGraphicsScene, image_dir: str = "assets") -> str:
 
         # ---------- Rectangles / Ellipses / Paths: export shape() polyline ----------
         if isinstance(it, (QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsPathItem)):
-            # For helper items (eraser circle, previews), many are non-selectable.
-            # We can optionally skip non-selectable items, but for now we export all.
             try:
                 path = it.mapToScene(it.shape())
             except Exception:
